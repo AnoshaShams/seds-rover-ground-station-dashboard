@@ -34,4 +34,4 @@ dashboard would need to map that format before field use.
 I used Claude Code as an AI coding assistant for this task. I reviewed, ran and
 tested the result myself.
 
-Repository: <GITHUB_URL_PLACEHOLDER>
+Repository: https://github.com/AnoshaShams/seds-rover-ground-station-dashboard
