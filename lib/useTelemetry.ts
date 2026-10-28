@@ -1,28 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import {
-  PAUSE_COMMAND,
-  PAUSE_MS,
-  TARGET_FPS,
-  WATCHDOG_MS,
-} from "@/shared/telemetry-constants.mjs";
-import {
-  DEFAULT_TELEMETRY_URL,
-  HISTORY_MS,
-  fmtDuration,
-  fmtUtcMs,
-  parseFrame,
-  type TelemetryFrame,
-} from "./telemetry";
+import { PAUSE_MS, TARGET_FPS, WATCHDOG_MS } from "@/shared/telemetry-constants.mjs";
+import { createSampleGate } from "./sampleGate";
+import type { TelemetrySource } from "./sources";
+import { HISTORY_MS, fmtDuration, fmtUtcMs, type TelemetryFrame } from "./telemetry";
 
 // Data flow
 // ---------
-// Frames arrive at ~30 Hz. They are written into a mutable store (a ref) that
-// the canvases read in their requestAnimationFrame loops, so frames never
-// cause a React render by themselves. React state is a throttled snapshot
-// (10 Hz) for the text readouts, plus the event log, which only changes when
-// the link state changes.
+// Frames arrive at ~30 Hz (simulator) or at the ROS topic rate (rosbridge,
+// every message, no server-side throttle). They are written into a mutable
+// store (a ref) that the canvases read in their requestAnimationFrame loops,
+// so frames never cause a React render by themselves. Trail and trace samples
+// are stored at no more than TARGET_FPS on average for sources that set
+// sampleIntervalMs. React state is a throttled snapshot (10 Hz) for the text
+// readouts, plus the event log, which only changes when the link state changes.
 
 export type SocketState = "connecting" | "open" | "closed";
 export type LinkState = "awaiting" | "nominal" | "lost";
@@ -32,7 +24,7 @@ export interface Sample {
   x: number;
   y: number;
   speed: number;
-  batteryV: number;
+  batteryV: number | null;
 }
 
 export interface Bounds {
@@ -60,7 +52,8 @@ export type LinkEventKind =
   | "socket-open"
   | "socket-closed"
   | "unreachable"
-  | "operator";
+  | "operator"
+  | "remote";
 
 export interface LinkEvent {
   id: number;
@@ -88,7 +81,7 @@ export interface TelemetrySnapshot {
 }
 
 export interface Telemetry {
-  url: string;
+  source: TelemetrySource | null;
   store: RefObject<TelemetryStore>;
   snapshot: TelemetrySnapshot;
   events: LinkEvent[];
@@ -133,7 +126,8 @@ function growBounds(bounds: Bounds | null, x: number, y: number): Bounds {
   };
 }
 
-export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
+/** Connects to `source`; does nothing while it is null (server render, before the query string is read) */
+export function useTelemetry(source: TelemetrySource | null): Telemetry {
   const store = useRef<TelemetryStore>(createStore());
   const socketRef = useRef<WebSocket | null>(null);
   const eventIdRef = useRef(0);
@@ -149,6 +143,8 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
   }, []);
 
   useEffect(() => {
+    if (!source) return;
+    const url = source.url;
     const s = store.current;
     let disposed = false;
     let socketState: SocketState = "connecting";
@@ -162,6 +158,8 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
     let framesReceived = 0;
     let lastFrameWall = 0;
     let tick = 0;
+    const remoteSeen = new Set<string>(); // rosbridge status texts already logged
+    const shouldSample = createSampleGate(source.sampleIntervalMs);
 
     const pruneArrivals = (now: number) => {
       while (arrivals.length > 0 && arrivals[0] < now - 1000) arrivals.shift();
@@ -190,22 +188,33 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
       });
     };
 
-    const onFrame = (frame: TelemetryFrame) => {
+    const onFrame = (frame: TelemetryFrame, frameId?: string, childFrameId?: string) => {
       const now = performance.now();
       const wall = Date.now();
       const previous = s.latest;
 
       if (s.link === "awaiting") {
         s.link = "nominal";
-        log("acquired", `first frame received, seq ${frame.seq}`);
+        if (frame.seq !== null) {
+          log("acquired", `first frame received, seq ${frame.seq}`);
+        } else {
+          const ids =
+            frameId || childFrameId
+              ? `, frame_id ${frameId || "?"}, child_frame_id ${childFrameId || "?"}`
+              : "";
+          log("acquired", `first message received${ids}`);
+        }
       } else if (s.link === "lost" && previous) {
         s.link = "nominal";
         const outageMs = now - s.lastFrameMono;
-        const missed = frame.seq - previous.seq - 1;
-        const seqText =
-          missed >= 0
-            ? `seq ${previous.seq} -> ${frame.seq}, ${missed} frames missed`
-            : `seq restarted at ${frame.seq}`;
+        let seqText = "frames missed: unknown (no sequence numbers on this source)";
+        if (frame.seq !== null && previous.seq !== null) {
+          const missed = frame.seq - previous.seq - 1;
+          seqText =
+            missed >= 0
+              ? `seq ${previous.seq} -> ${frame.seq}, ${missed} frames missed`
+              : `seq restarted at ${frame.seq}`;
+        }
         log("restored", `frames resumed after ${fmtDuration(outageMs)} outage, ${seqText}`);
         dropRef.current = null;
       }
@@ -213,12 +222,14 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
       s.latest = frame;
       s.lastFrameMono = now;
       s.bounds = growBounds(s.bounds, frame.x, frame.y);
-      s.samples.push({ t: wall, x: frame.x, y: frame.y, speed: frame.speed, batteryV: frame.batteryV });
+      if (shouldSample(wall)) {
+        s.samples.push({ t: wall, x: frame.x, y: frame.y, speed: frame.speed, batteryV: frame.batteryV });
+      }
       while (s.samples.length > 0 && s.samples[0].t < wall - HISTORY_MS) s.samples.shift();
 
       arrivals.push(now);
       pruneArrivals(now);
-      latencyMs = wall - frame.ts;
+      latencyMs = source.latencyComparable ? wall - frame.ts : null;
       lastFrameWall = wall;
       framesReceived += 1;
     };
@@ -251,20 +262,24 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
         socketState = "open";
         backoffMs = BACKOFF_MIN_MS;
         reportedUnreachable = false;
+        remoteSeen.clear();
         log("socket-open", `connected to ${url}`);
+        for (const message of source.openMessages) ws.send(message);
+        if (source.openNote) log("operator", source.openNote);
         publish();
       };
 
       ws.onmessage = (event: MessageEvent) => {
         if (disposed || typeof event.data !== "string") return;
-        let decoded: unknown;
-        try {
-          decoded = JSON.parse(event.data);
-        } catch {
-          return;
+        const message = source.decode(event.data);
+        if (!message) return;
+        if (message.kind === "frame") {
+          onFrame(message.frame, message.frameId, message.childFrameId);
+        } else if (!remoteSeen.has(message.text)) {
+          // Each distinct server status is logged once per connection
+          remoteSeen.add(message.text);
+          log("remote", `${message.level}: ${message.text}`);
         }
-        const frame = parseFrame(decoded);
-        if (frame) onFrame(frame);
       };
 
       ws.onclose = () => {
@@ -287,10 +302,11 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
     const watchdog = setInterval(() => {
       if (s.link === "nominal" && performance.now() - s.lastFrameMono > WATCHDOG_MS) {
         s.link = "lost";
-        const lastSeq = s.latest ? s.latest.seq : 0;
+        const lastSeq = s.latest ? s.latest.seq : null;
+        const lastText = lastSeq === null ? "last frame" : `last seq ${lastSeq}`;
         log(
           "lost",
-          `no frame for more than ${WATCHDOG_MS} ms, last seq ${lastSeq} at ${fmtUtcMs(lastFrameWall)} UTC`,
+          `no frame for more than ${WATCHDOG_MS} ms, ${lastText} at ${fmtUtcMs(lastFrameWall)} UTC`,
         );
         tick = 0;
         publish();
@@ -318,16 +334,17 @@ export function useTelemetry(url: string = DEFAULT_TELEMETRY_URL): Telemetry {
         ws.close();
       }
     };
-  }, [url, log]);
+  }, [source, log]);
 
   const sendPause = useCallback((): boolean => {
     const ws = socketRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || dropRef.current !== null) return false;
+    if (!source || !ws || ws.readyState !== WebSocket.OPEN || dropRef.current !== null) return false;
     dropRef.current = performance.now();
-    ws.send(PAUSE_COMMAND);
-    log("operator", `sent "${PAUSE_COMMAND}" to ${url}, server holds frames for ${PAUSE_MS / 1000} s`);
+    ws.send(source.pauseMessage);
+    const what = source.kind === "sim" ? `"${source.pauseMessage}"` : source.pauseMessage;
+    log("operator", `sent ${what} to ${source.url}, server holds frames for ${PAUSE_MS / 1000} s`);
     return true;
-  }, [url, log]);
+  }, [source, log]);
 
-  return { url, store, snapshot, events, targetFps: TARGET_FPS, sendPause };
+  return { source, store, snapshot, events, targetFps: TARGET_FPS, sendPause };
 }

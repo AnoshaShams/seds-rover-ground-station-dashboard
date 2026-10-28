@@ -26,10 +26,17 @@ function socketText(snapshot: TelemetrySnapshot): string {
 }
 
 function seqText(frame: TelemetryFrame | null): string {
-  return frame ? String(frame.seq) : "--";
+  return frame && frame.seq !== null ? String(frame.seq) : "--";
 }
 
-export function StatusBar({ snapshot, targetFps }: { snapshot: TelemetrySnapshot; targetFps: number }) {
+interface StatusBarProps {
+  snapshot: TelemetrySnapshot;
+  targetFps: number;
+  /** Rosbridge source: no sequence numbers, rate is the ROS topic's */
+  rosbridge: boolean;
+}
+
+export function StatusBar({ snapshot, targetFps, rosbridge }: StatusBarProps) {
   const hasFrames = snapshot.frame !== null;
   const lost = snapshot.link === "lost";
 
@@ -54,10 +61,10 @@ export function StatusBar({ snapshot, targetFps }: { snapshot: TelemetrySnapshot
       </dl>
 
       <dl className="stat">
-        <dt>FPS</dt>
+        <dt>{rosbridge ? "Rate" : "FPS"}</dt>
         <dd className="num">
           {hasFrames ? snapshot.fps : "--"}
-          <span className="unit">/ {targetFps}</span>
+          <span className="unit">{rosbridge ? "msg/s" : `/ ${targetFps}`}</span>
         </dd>
       </dl>
 
@@ -70,8 +77,10 @@ export function StatusBar({ snapshot, targetFps }: { snapshot: TelemetrySnapshot
       </dl>
 
       <dl className="stat">
-        <dt>Frame</dt>
-        <dd className="num">{seqText(snapshot.frame)}</dd>
+        <dt>{rosbridge ? "Msgs" : "Frame"}</dt>
+        <dd className="num">
+          {rosbridge ? (hasFrames ? snapshot.framesReceived : "--") : seqText(snapshot.frame)}
+        </dd>
       </dl>
 
       <dl className="stat">

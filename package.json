@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "sim": "node server/telemetry-server.mjs",
+    "sim:rosbridge": "node server/fake-rosbridge.mjs",
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {

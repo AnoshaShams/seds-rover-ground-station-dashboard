@@ -7,6 +7,23 @@ const MIN_HALF_SPAN_M = 10;
 const MARGIN_M = 2;
 const TRAIL_CHUNK = 6; // segments per stroke; each chunk gets one alpha value
 
+// Odometry mode: the demo path is a few metres wide, so the view fits the
+// visible trail (minimum 4 m x 4 m) and eases toward it instead of jumping.
+const ODOM_MIN_HALF_SPAN_M = 2;
+const ODOM_MARGIN_M = 0.5;
+const ODOM_VIEW_EASE = 0.12; // fraction of the remaining change per animation frame
+
+/** View state kept between animation frames (odometry mode only) */
+export interface MapView {
+  bounds: Bounds | null;
+}
+
+export interface MapMode {
+  /** Positions are in the odom frame: +x is the rover's start direction, no north */
+  odomFrame: boolean;
+  view: MapView;
+}
+
 /** 1, 2 or 5 times a power of ten, at least `raw` */
 export function niceStep(raw: number): number {
   const pow = 10 ** Math.floor(Math.log10(raw));
@@ -29,6 +46,46 @@ function viewBounds(bounds: Bounds | null): Bounds {
   return { minX: cx - hx, maxX: cx + hx, minY: cy - hy, maxY: cy + hy };
 }
 
+/** Bounds of the trail still drawn plus the current position, padded to the minimum span */
+function odomTarget(store: TelemetryStore, nowWall: number): Bounds {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  const include = (x: number, y: number) => {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  };
+  for (const s of store.samples) if (s.t >= nowWall - TRAIL_MS) include(s.x, s.y);
+  if (store.latest) include(store.latest.x, store.latest.y);
+  if (minX === Infinity) include(0, 0);
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const hx = Math.max((maxX - minX) / 2 + ODOM_MARGIN_M, ODOM_MIN_HALF_SPAN_M);
+  const hy = Math.max((maxY - minY) / 2 + ODOM_MARGIN_M, ODOM_MIN_HALF_SPAN_M);
+  return { minX: cx - hx, maxX: cx + hx, minY: cy - hy, maxY: cy + hy };
+}
+
+function odomViewBounds(store: TelemetryStore, nowWall: number, view: MapView): Bounds {
+  const target = odomTarget(store, nowWall);
+  const current = view.bounds;
+  if (!current) {
+    view.bounds = target;
+    return target;
+  }
+  const ease = (from: number, to: number) => from + (to - from) * ODOM_VIEW_EASE;
+  view.bounds = {
+    minX: ease(current.minX, target.minX),
+    maxX: ease(current.maxX, target.maxX),
+    minY: ease(current.minY, target.minY),
+    maxY: ease(current.maxY, target.maxY),
+  };
+  return view.bounds;
+}
+
 function fmtGridLabel(value: number, step: number): string {
   return step < 1 ? value.toFixed(1) : String(Math.round(value));
 }
@@ -40,11 +97,14 @@ export function drawMap(
   store: TelemetryStore,
   nowWall: number,
   nowMono: number,
+  mode: MapMode,
 ): void {
   ctx.fillStyle = P.panel;
   ctx.fillRect(0, 0, w, h);
 
-  const view = viewBounds(store.bounds);
+  const view = mode.odomFrame
+    ? odomViewBounds(store, nowWall, mode.view)
+    : viewBounds(store.bounds);
   const scale = Math.min(
     (w - 2 * PAD_PX) / (view.maxX - view.minX),
     (h - 2 * PAD_PX) / (view.maxY - view.minY),
@@ -154,25 +214,12 @@ export function drawMap(
     ctx.restore();
   }
 
-  // ---- north indicator (top right) ----------------------------------------
-  const nx = w - 28;
-  const ny = 22;
-  ctx.strokeStyle = P.text;
-  ctx.fillStyle = P.text;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(nx, ny + 30);
-  ctx.lineTo(nx, ny + 8);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(nx, ny + 2);
-  ctx.lineTo(nx - 5, ny + 11);
-  ctx.lineTo(nx + 5, ny + 11);
-  ctx.closePath();
-  ctx.fill();
-  ctx.font = `600 13px ${LABEL_FONT}`;
-  ctx.textAlign = "center";
-  ctx.fillText("N", nx, ny - 4);
+  // ---- direction indicator (top right) --------------------------------------
+  if (mode.odomFrame) {
+    drawXAxisArrow(ctx, w);
+  } else {
+    drawNorthArrow(ctx, w);
+  }
 
   // ---- scale bar (bottom right) -------------------------------------------
   const barM = niceStep(110 / scale);
@@ -203,6 +250,50 @@ export function drawMap(
     const silence = Math.max(WATCHDOG_MS, nowMono - store.lastFrameMono);
     drawNotice(ctx, w, "LINK LOST", `no frames for ${fmtDuration(silence)}, position held`, true);
   }
+}
+
+function drawNorthArrow(ctx: CanvasRenderingContext2D, w: number): void {
+  const nx = w - 28;
+  const ny = 22;
+  ctx.strokeStyle = P.text;
+  ctx.fillStyle = P.text;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(nx, ny + 30);
+  ctx.lineTo(nx, ny + 8);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(nx, ny + 2);
+  ctx.lineTo(nx - 5, ny + 11);
+  ctx.lineTo(nx + 5, ny + 11);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = `600 13px ${LABEL_FONT}`;
+  ctx.textAlign = "center";
+  ctx.fillText("N", nx, ny - 4);
+}
+
+/** Odom frame has no north: show the +x axis (rover start direction) instead */
+function drawXAxisArrow(ctx: CanvasRenderingContext2D, w: number): void {
+  const x1 = w - 18;
+  const x0 = x1 - 34;
+  const y = 30;
+  ctx.strokeStyle = P.text;
+  ctx.fillStyle = P.text;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, y);
+  ctx.lineTo(x1 - 8, y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x1, y);
+  ctx.lineTo(x1 - 9, y - 5);
+  ctx.lineTo(x1 - 9, y + 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = `600 13px ${LABEL_FONT}`;
+  ctx.textAlign = "right";
+  ctx.fillText("+x", x0 - 6, y + 4);
 }
 
 function drawNotice(

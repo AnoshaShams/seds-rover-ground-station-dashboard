@@ -6,6 +6,7 @@ import {
   BATTERY_MIN_V,
   EMPTY,
   bearingToCardinal,
+  fmtAngle360,
   fmtBearing,
   fmtFixed,
   fmtSigned,
@@ -62,15 +63,19 @@ function stateText(snapshot: TelemetrySnapshot): string {
 interface ReadoutPanelProps {
   snapshot: TelemetrySnapshot;
   store: RefObject<TelemetryStore>;
+  /** Odometry source: odom frame positions, yaw instead of bearing, no battery */
+  odomFrame: boolean;
 }
 
-export function ReadoutPanel({ snapshot, store }: ReadoutPanelProps) {
+export function ReadoutPanel({ snapshot, store, odomFrame }: ReadoutPanelProps) {
   const f = snapshot.frame;
   const bearing = f ? headingToBearing(f.headingDeg) : null;
-  const low = f ? isBatteryLow(f.batteryV) : false;
-  const fillPct = f
-    ? Math.min(100, Math.max(0, ((f.batteryV - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100))
-    : 0;
+  const volts = f ? f.batteryV : null;
+  const low = volts !== null && isBatteryLow(volts);
+  const fillPct =
+    volts !== null
+      ? Math.min(100, Math.max(0, ((volts - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100))
+      : 0;
   const thresholdPct = ((BATTERY_LOW_V - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100;
 
   return (
@@ -82,10 +87,25 @@ export function ReadoutPanel({ snapshot, store }: ReadoutPanelProps) {
 
       <div className="readout-body">
         <div className="group">
-          <Row label="Speed" value={fmtFixed(f?.speed, 2)} unit="m/s" />
+          <Row
+            label="Speed"
+            value={odomFrame ? fmtSigned(f?.speed, 2) : fmtFixed(f?.speed, 2)}
+            unit="m/s"
+            note={odomFrame ? "negative when reversing" : undefined}
+          />
           <TraceCanvas store={store} spec={SPEED_TRACE} label="Speed, last 60 seconds" />
         </div>
 
+        {odomFrame ? (
+          <div className="group">
+            <Row label="Battery" value={EMPTY} unit="V" />
+            <div className="battery-status">
+              <span className="row-label">Status</span>
+              <span className="status-word is-unavailable">UNAVAILABLE</span>
+              <span className="battery-rule">no battery data on this source</span>
+            </div>
+          </div>
+        ) : (
         <div className="group">
           <Row label="Battery" value={fmtFixed(f?.batteryV, 2)} unit="V" />
           <div className="battery">
@@ -102,28 +122,48 @@ export function ReadoutPanel({ snapshot, store }: ReadoutPanelProps) {
             </div>
             <div className="battery-status">
               <span className="row-label">Status</span>
-              <span className={`status-word ${f ? (low ? "is-low" : "is-ok") : ""}`}>
-                {f ? (low ? "LOW" : "NOMINAL") : EMPTY}
+              <span className={`status-word ${volts !== null ? (low ? "is-low" : "is-ok") : ""}`}>
+                {volts !== null ? (low ? "LOW" : "NOMINAL") : EMPTY}
               </span>
               <span className="battery-rule">LOW below {BATTERY_LOW_V.toFixed(1)} V</span>
             </div>
           </div>
           <TraceCanvas store={store} spec={BATTERY_TRACE} label="Battery voltage, last 60 seconds" />
         </div>
-
-        <div className="group">
-          <Row label="Position X" value={fmtSigned(f?.x, 2)} unit="m" note="east" />
-          <Row label="Position Y" value={fmtSigned(f?.y, 2)} unit="m" note="north" />
-        </div>
+        )}
 
         <div className="group">
           <Row
-            label="Heading"
-            value={fmtBearing(bearing)}
-            unit="deg"
-            note={bearing === null ? undefined : bearingToCardinal(bearing)}
-            caption="bearing, clockwise from north"
+            label="Position X"
+            value={fmtSigned(f?.x, 2)}
+            unit="m"
+            note={odomFrame ? "start direction" : "east"}
           />
+          <Row
+            label="Position Y"
+            value={fmtSigned(f?.y, 2)}
+            unit="m"
+            note={odomFrame ? "left of start" : "north"}
+          />
+        </div>
+
+        <div className="group">
+          {odomFrame ? (
+            <Row
+              label="Heading"
+              value={fmtAngle360(f?.headingDeg)}
+              unit="deg"
+              caption="yaw, counter-clockwise from start direction"
+            />
+          ) : (
+            <Row
+              label="Heading"
+              value={fmtBearing(bearing)}
+              unit="deg"
+              note={bearing === null ? undefined : bearingToCardinal(bearing)}
+              caption="bearing, clockwise from north"
+            />
+          )}
         </div>
       </div>
     </section>

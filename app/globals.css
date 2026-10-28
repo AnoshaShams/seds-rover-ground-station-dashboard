@@ -443,6 +443,11 @@ ol {
   color: var(--caution);
 }
 
+/* No battery data on this source: a plain state, not a status colour */
+.status-word.is-unavailable {
+  color: var(--text);
+}
+
 .battery-rule {
   margin-left: auto;
   color: var(--label);
@@ -455,6 +460,13 @@ ol {
   align-items: center;
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+.log-source {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 
@@ -496,7 +508,8 @@ ol {
 }
 
 .kind-socket-closed .log-kind,
-.kind-unreachable .log-kind {
+.kind-unreachable .log-kind,
+.kind-remote .log-kind {
   color: var(--caution);
 }
 

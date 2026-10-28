@@ -1,18 +1,22 @@
 // Telemetry frame format, conventions and formatting helpers.
 //
-// Frame conventions (same as server/telemetry-server.mjs):
-//   x = east, y = north, metres
-//   headingDeg: 0 = east, counter-clockwise positive (maths convention)
-// The UI shows a compass bearing instead: 0 = north, clockwise positive.
+// Frame conventions:
+//   Simulator (server/telemetry-server.mjs): x = east, y = north, metres;
+//   headingDeg 0 = east, counter-clockwise. The UI shows a compass bearing
+//   instead: 0 = north, clockwise positive.
+//   Rosbridge odometry (lib/odometry.ts): x, y in the odom frame, where +x is
+//   the direction the rover faced at start; headingDeg is the yaw,
+//   counter-clockwise from +x. There is no north in this frame.
 
 export interface TelemetryFrame {
-  seq: number;
-  ts: number; // ms since the Unix epoch, set by the sender
-  speed: number; // m/s
-  batteryV: number; // V
-  x: number; // m, east
-  y: number; // m, north
-  headingDeg: number; // 0 = east, CCW
+  /** Sender's frame counter, null when the source has none (ROS 2 headers) */
+  seq: number | null;
+  ts: number; // ms since the Unix epoch, set by the sender (may be another clock)
+  speed: number; // m/s, negative when reversing (odometry)
+  batteryV: number | null; // V, null when the source has no battery data
+  x: number; // m
+  y: number; // m
+  headingDeg: number; // 0 = +x, CCW, [0, 360)
 }
 
 export { PAUSE_COMMAND, PAUSE_MS, TARGET_FPS, WATCHDOG_MS } from "@/shared/telemetry-constants.mjs";
@@ -78,6 +82,11 @@ export function isBatteryLow(volts: number): boolean {
   return volts < BATTERY_LOW_V;
 }
 
+/** Any angle in degrees to [0, 360) */
+export function normalizeDeg(deg: number): number {
+  return mod(deg, 360);
+}
+
 // ---- formatting ----------------------------------------------------------
 
 export const EMPTY = "--";
@@ -93,6 +102,11 @@ export function fmtSigned(value: number | null | undefined, digits: number): str
   // Avoid showing "-0.00"
   const isZero = Number(text) === 0;
   return (value < 0 && !isZero ? "-" : "+") + text;
+}
+
+/** Any [0, 360) angle as 000.0 to 359.9 (bearing in simulator mode, yaw in odometry mode) */
+export function fmtAngle360(deg: number | null | undefined): string {
+  return fmtBearing(deg);
 }
 
 /** Bearing as 000.0 to 359.9 */

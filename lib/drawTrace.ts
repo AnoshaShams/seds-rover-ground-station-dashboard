@@ -3,7 +3,8 @@ import { MONO_FONT, PALETTE as P } from "./palette";
 import type { Sample } from "./useTelemetry";
 
 export interface TraceSpec {
-  value: (sample: Sample) => number;
+  /** null where the source has no value; the line breaks there */
+  value: (sample: Sample) => number | null;
   /** Fixed axis range; values outside it extend the axis */
   min: number;
   max: number;
@@ -32,6 +33,7 @@ export function drawTrace(
   let max = spec.max;
   for (const s of samples) {
     const v = spec.value(s);
+    if (v === null) continue;
     if (v < min) min = v;
     if (v > max) max = v;
   }
@@ -94,12 +96,19 @@ export function drawTrace(
   ctx.lineWidth = 1.5;
   ctx.lineJoin = "round";
   ctx.beginPath();
+  let penDown = false;
   for (let i = 0; i < samples.length; i += 1) {
     const s = samples[i];
+    const v = spec.value(s);
+    if (v === null) {
+      penDown = false;
+      continue;
+    }
     const px = toX(s.t);
-    const py = toY(spec.value(s));
-    if (i === 0 || s.t - samples[i - 1].t > SAMPLE_GAP_MS) ctx.moveTo(px, py);
+    const py = toY(v);
+    if (!penDown || s.t - samples[i - 1].t > SAMPLE_GAP_MS) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
+    penDown = true;
   }
   ctx.stroke();
   ctx.restore();

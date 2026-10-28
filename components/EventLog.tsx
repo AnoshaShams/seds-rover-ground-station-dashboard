@@ -9,14 +9,22 @@ const KIND_LABEL: Record<LinkEventKind, string> = {
   "socket-closed": "SOCKET CLOSED",
   unreachable: "UNREACHABLE",
   operator: "OPERATOR",
+  remote: "SERVER",
 };
 
-export function EventLog({ events }: { events: LinkEvent[] }) {
+interface EventLogProps {
+  events: LinkEvent[];
+  /** Data source description, null until the source is chosen */
+  sourceText: string | null;
+}
+
+export function EventLog({ events, sourceText }: EventLogProps) {
   return (
     <section className="panel log" aria-label="Link event log">
       <div className="panel-head">
         <h2 className="panel-title">Link event log</h2>
         <span className="panel-meta">{events.length} entries, newest first</span>
+        {sourceText ? <span className="panel-meta log-source">source: {sourceText}</span> : null}
       </div>
       <ol className="log-list">
         {events.length === 0 ? (

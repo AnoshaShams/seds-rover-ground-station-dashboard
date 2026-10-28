@@ -14,3 +14,7 @@ export const PAUSE_MS = 2000;
 
 /** Text message that asks the simulator to hold frames */
 export const PAUSE_COMMAND = "pause";
+
+/** Odometry source (rosbridge mode): topic and default rosbridge address */
+export const DEFAULT_ODOM_TOPIC = "/wheel/odometry";
+export const DEFAULT_ROSBRIDGE_URL = "ws://localhost:9090";
