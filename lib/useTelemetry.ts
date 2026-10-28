@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { PAUSE_MS, TARGET_FPS, WATCHDOG_MS } from "@/shared/telemetry-constants.mjs";
-import { createSampleGate } from "./sampleGate";
+import { createSampleGate } from "@/shared/sample-gate.mjs";
 import type { TelemetrySource } from "./sources";
 import { HISTORY_MS, fmtDuration, fmtUtcMs, type TelemetryFrame } from "./telemetry";
 

@@ -1,38 +1,47 @@
 Rover ground station: acceptance verification
-Run at:    2026-10-28 00:05:00 (UTC+05:00), 2026-10-27T19:05:00.927Z
-Criteria:  TypeScript build passing; WebSocket updates at 30 fps with <500 ms watchdog
+Run at:    2026-10-28 21:34:15 (UTC+05:00), 2026-10-28T16:34:15.186Z
+Criteria:  TypeScript build passing; WebSocket updates at 30 fps with <500 ms watchdog;
+           odometry mode: 50 Hz nav_msgs/Odometry via rosbridge, sampled at 30 Hz
 Constants: WATCHDOG_MS=500, TARGET_FPS=30, PAUSE_MS=2000 (shared/telemetry-constants.mjs, also imported by the dashboard)
+Shared:    shared/sample-gate.mjs and shared/odometry.mjs, the dashboard's own code
 Platform:  Node v24.18.0, win32 x64
-Source:    ws://localhost:8080, already running, used as is
+Source:    simulator ws://localhost:8080, already running, used as is
+Source:    rosbridge ws://localhost:9090, already running, used as is
 
-[1,2] Measuring 5 s of frames after a 500 ms warm-up ...
-[3]   Sending "pause", watching for 4 s ...
-[4a]  Running npx tsc --noEmit ...
-[4b]  Running npm run build ...
+[1,2] Simulator: measuring 5 s of frames after a 500 ms warm-up ...
+[3]   Simulator: sending "pause", watching for 4 s ...
+[6-8] Odometry: measuring 12 s of /wheel/odometry after a 500 ms warm-up ...
+[9]   Odometry: sending {"op":"pause"}, watching for 4 s ...
+[4]   Running npx tsc --noEmit ...
+[5]   Running npm run build ...
       | > ground-station@0.1.0 build
       | > next build
       | ▲ Next.js 16.4.3 (Turbopack)
-      | ✓ Running next.config.ts took 23ms
+      | ✓ Running next.config.ts took 36ms
       |   Creating an optimized production build ...
-      | ✓ Compiled successfully in 231ms
+      | ✓ Compiled successfully in 210ms
       |   Running TypeScript ...
-      |   Finished TypeScript in 1707ms ...
+      |   Finished TypeScript in 2.2s ...
       |   Collecting page data using 4 workers ...
       |   Generating static pages using 4 workers (0/3) ...
-      | ✓ Generating static pages using 4 workers (3/3) in 543ms
+      | ✓ Generating static pages using 4 workers (3/3) in 719ms
       |   Finalizing page optimization ...
       | Route (app)
       | ┌ ○ /
       | └ ○ /_not-found
       | ○  (Static)  prerendered as static content
 
-#   Check                          Criterion                         Measured                                                                       Result
---  -----------------------------  --------------------------------  -----------------------------------------------------------------------------  ------
-1   Frame rate, 5 s window         28 to 32 fps                      30.00 fps (150 frames; seq rate 30.02/s)                                       PASS
-2   Largest gap, normal operation  < 100 ms                          max 47.3 ms (mean 33.3, p99 47.3, 0 of 149 gaps > 50 ms)                       PASS
-3   Pause gap and recovery         gap > 500 ms, then frames resume  outage 2034 ms (server hold 2000 ms), resumed: 60 frames after, 60 seq missed  PASS
-4a  TypeScript                     npx tsc --noEmit exits 0          exit 0 (1.7 s)                                                                 PASS
-4b  Production build               npm run build exits 0             exit 0 (4.2 s)                                                                 PASS
+#  Check                              Criterion                                                                                                                      Measured                                                                                                                                                        Result
+-  ---------------------------------  -----------------------------------------------------------------------------------------------------------------------------  --------------------------------------------------------------------------------------------------------------------------------------------------------------  ------
+1  Frame rate, 5 s window             28 to 32 fps                                                                                                                   30.00 fps (150 frames; seq rate 29.98/s)                                                                                                                        PASS
+2  Largest gap, normal operation      < 100 ms                                                                                                                       max 66.0 ms (mean 33.4, p99 49.0, 1 of 149 gaps > 50 ms)                                                                                                        PASS
+3  Pause gap and recovery             gap > 500 ms, then frames resume                                                                                               outage 2031 ms (server hold 2000 ms), resumed: 60 frames after, 60 seq missed                                                                                   PASS
+4  TypeScript                         npx tsc --noEmit exits 0                                                                                                       exit 0 (2.9 s)                                                                                                                                                  PASS
+5  Production build                   npm run build exits 0                                                                                                          exit 0 (5.5 s)                                                                                                                                                  PASS
+6  Odometry message rate              45 to 55 msg/s                                                                                                                 50.00 msg/s (600 msgs in 12 s; max gap 34.9 ms)                                                                                                                 PASS
+7  Sample gate rate (dashboard code)  28 to 32 samples/s                                                                                                             29.87 samples/s (359 of 600 msgs kept, arrival times)                                                                                                           PASS
+8  Odometry conversion                straight: v 0.30 +/- 0.01 (each +/- 0.02), yaw spread <= 0.5 deg, track <= 1 deg; turn: |v| <= 0.01, yaw +28.65 deg/s +/- 5 %  straight: v +0.300 m/s (worst dev 0.000), yaw spread 0.00 deg, track vs yaw 0.00 deg; turn: |v| max 0.000 m/s, yaw rate +28.64 deg/s (0.0 % off); 2+1 segments  PASS
+9  Odometry pause gap and recovery    gap > 500 ms, then messages resume                                                                                             outage 2008 ms (server hold 2000 ms), resumed: 100 msgs after                                                                                                   PASS
 
-OVERALL: PASS (5 of 5 checks passed)
-Finished: 2026-10-28 00:05:16 (UTC+05:00)
+OVERALL: PASS (9 of 9 checks passed)
+Finished: 2026-10-28 21:34:49 (UTC+05:00)

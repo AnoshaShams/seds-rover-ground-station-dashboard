@@ -82,11 +82,6 @@ export function isBatteryLow(volts: number): boolean {
   return volts < BATTERY_LOW_V;
 }
 
-/** Any angle in degrees to [0, 360) */
-export function normalizeDeg(deg: number): number {
-  return mod(deg, 360);
-}
-
 // ---- formatting ----------------------------------------------------------
 
 export const EMPTY = "--";

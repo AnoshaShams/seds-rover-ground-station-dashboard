@@ -1,3 +1,7 @@
+// Sample gate shared by the dashboard (lib/useTelemetry.ts) and the
+// acceptance test (scripts/verify.mjs, check 7). Plain JavaScript so Node can
+// import it without a build step; types are in sample-gate.d.mts.
+
 /**
  * Decides which incoming frames become stored trail and trace samples.
  *
@@ -6,8 +10,11 @@
  * with a 33.3 ms interval keeps 30 frames per second, not 25 as a plain
  * "at least 33.3 ms since the last sample" rule would. After a gap longer than
  * one interval the schedule restarts from the next frame.
+ *
+ * @param {number} intervalMs
+ * @returns {(wallMs: number) => boolean}
  */
-export function createSampleGate(intervalMs: number): (wallMs: number) => boolean {
+export function createSampleGate(intervalMs) {
   let nextAt = -Infinity;
   return (wallMs) => {
     if (intervalMs <= 0) return true;

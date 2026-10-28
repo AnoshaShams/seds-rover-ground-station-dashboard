@@ -176,19 +176,26 @@ npm run verify
 ```
 
 `scripts/verify.mjs` checks the acceptance criteria "TypeScript build passing;
-WebSocket updates at 30 fps with <500 ms watchdog". It uses a simulator already
-listening on port 8080 if there is one, otherwise it starts one and stops it at
-the end. Thresholds are imported from `shared/telemetry-constants.mjs`, the same
-values the dashboard uses.
+WebSocket updates at 30 fps with <500 ms watchdog" for the simulator, and the
+odometry mode against the fake rosbridge. It uses a simulator on port 8080 and
+a rosbridge on port 9090 if they are already running, otherwise it starts
+`server/telemetry-server.mjs` and `server/fake-rosbridge.mjs` and stops them at
+the end. Thresholds come from `shared/telemetry-constants.mjs`; checks 7 and 8
+run the dashboard's own `shared/sample-gate.mjs` and `shared/odometry.mjs`.
 
 | Check | Pass condition |
 |---|---|
-| 1. Frame rate | 28 to 32 frames per second over 5 seconds |
-| 2. Largest gap between frames in normal operation | under 100 ms |
-| 3. Send `pause` | a gap longer than `WATCHDOG_MS` (500 ms) is seen, then frames resume |
-| 4. `npx tsc --noEmit` and `npm run build` | both exit with code 0 |
+| 1. Simulator frame rate | 28 to 32 frames per second over 5 seconds |
+| 2. Largest gap between simulator frames | under 100 ms |
+| 3. Send `pause` to the simulator | a gap longer than `WATCHDOG_MS` (500 ms) is seen, then frames resume |
+| 4. `npx tsc --noEmit` | exit code 0 |
+| 5. `npm run build` | exit code 0 |
+| 6. Odometry message rate | 45 to 55 messages per second over 12 seconds (50 Hz expected) |
+| 7. Sample gate on the real arrival times | 28 to 32 samples per second |
+| 8. Odometry conversion | straight phase: speed 0.30 +/- 0.01 m/s (each sample +/- 0.02), yaw spread at most 0.5 deg, direction of travel within 1 deg of yaw; turn phase: speed at most 0.01 m/s, yaw rate +28.65 deg/s +/- 5 % |
+| 9. Send `{"op":"pause"}` to the rosbridge | a gap longer than `WATCHDOG_MS` is seen, then messages resume |
 
-It prints a PASS/FAIL table with the measured values and the date and time,
+It prints one PASS/FAIL table with the measured values and the date and time,
 saves the output to `proof/verify-output.txt`, and exits with a non-zero code
 if any check fails.
 
@@ -196,13 +203,21 @@ Last saved run (`proof/verify-output.txt`, Windows 11, Node 24.18):
 
 | Check | Measured | Result |
 |---|---|---|
-| Frame rate | 30.00 fps (150 frames in 5 s) | PASS |
-| Largest gap | 47.3 ms (mean 33.3 ms) | PASS |
-| Pause gap and recovery | 2034 ms outage, frames resumed, 60 frames missed | PASS |
-| TypeScript check | exit 0 | PASS |
-| Production build | exit 0 | PASS |
+| 1. Simulator frame rate | 30.00 fps (150 frames in 5 s) | PASS |
+| 2. Largest gap | 66.0 ms (mean 33.4 ms, p99 49.0 ms) | PASS |
+| 3. Simulator pause | 2031 ms outage, frames resumed, 60 frames missed | PASS |
+| 4. TypeScript check | exit 0 | PASS |
+| 5. Production build | exit 0 | PASS |
+| 6. Odometry message rate | 50.00 msg/s (600 in 12 s) | PASS |
+| 7. Sample gate | 29.87 samples/s (359 of 600 kept) | PASS |
+| 8. Odometry conversion | straight +0.300 m/s, yaw spread 0.00 deg; turn yaw rate +28.64 deg/s | PASS |
+| 9. Rosbridge pause | 2008 ms outage, messages resumed | PASS |
 
-The 47 ms largest gap comes from the Windows timer resolution (about 15.6 ms).
+The simulator's largest gap varies between runs (48.7 ms and 66.0 ms in two
+consecutive runs) because of the Windows timer resolution (about 15.6 ms) and
+other load on the machine. It is the check with the smallest margin. Check 8
+measures exact values because the fake rosbridge computes ideal odometry; the
+real node's speeds jitter slightly around 0.3 m/s.
 
 ## Limitations
 
@@ -225,6 +240,8 @@ The 47 ms largest gap comes from the Windows timer resolution (about 15.6 ms).
   (`ws://`, not `wss://`). It is meant for a trusted local network.
 - **Pause affects everyone.** The `pause` command is a simulator feature for
   demonstrations. It affects every connected client.
-- **Limited test coverage.** `npm run verify` checks the simulator's frame rate
-  and timing and the build. It does not drive the dashboard in a browser. The
-  dashboard's LINK LOST display and recovery were checked by hand.
+- **Limited test coverage.** `npm run verify` checks the data sources' rates and
+  timing, the sample gate, the odometry conversion and the build. It does not
+  drive the dashboard in a browser. The dashboard's LINK LOST display and
+  recovery were checked by hand. The odometry checks run against
+  `server/fake-rosbridge.mjs`, not a real rosbridge_server and ROS 2 node.
