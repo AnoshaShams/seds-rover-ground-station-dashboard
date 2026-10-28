@@ -1,35 +1,40 @@
-# Work Report
+Work Report
 
-**To:** Bushra Rahman, Ahmed Ali Kamran
-**Task:** SEDS-TASK-ROV-SRILANKA-005, Web Browser Ground Station Telemetry Dashboard
+To: Bushra Rahman, Ahmed Ali Kamran
 
-## What I built
+Task: SEDS-TASK-ROV-SRILANKA-005, Web Browser Ground Station Telemetry Dashboard
 
-I built a browser ground station for the SEDS Pakistan rover using Next.js,
-React and strict TypeScript, with no UI, chart or map libraries. A Node
-WebSocket simulator stands in for the rover's ROS 2 node (`updater.py`) and the
-bridge that would forward its `mission_control_updater` topic. It sends a frame
-30 times per second with speed, battery voltage, position and heading. The
-dashboard shows a canvas map with a fading trail and heading arrow, a readout
-table with 60 second speed and battery traces, a status bar with frame rate and
-latency, and a timestamped link event log. A watchdog shows LINK LOST when no
-frame arrives for more than 500 ms, holds and dims the values, and recovers
-when frames resume. A button pauses the simulator to demonstrate this.
+What I built
 
-## How I verified it
+I built a browser ground station dashboard for the SEDS Pakistan rover using
+Next.js, React and strict TypeScript, without UI, chart or map libraries. It
+has two data sources. The first is a built-in simulator that sends speed,
+battery voltage, position and heading 30 times per second. The second is
+rosbridge mode, which reads nav_msgs/Odometry from /wheel/odometry, as my
+teammate Giyan's node publishes it, through the rosbridge protocol. The
+dashboard shows a canvas map, readouts with history traces, a status bar and a
+link event log. A watchdog shows LINK LOST after 500 ms without data and
+recovers automatically.
 
-`npm run verify` runs the acceptance checks with the dashboard's own constants.
-In the saved run (proof/verify-output.txt) it measured 30.00 fps over 5 seconds, a largest gap of 47.3 ms between frames (limit 100 ms), and a
-2034 ms outage after a pause, with frames resuming and 60 frames missed. The
-TypeScript check and the production build both exited with code 0, so all 5
-checks passed. By hand, I also checked link loss, reconnection and the layout
-at 1366x768 and 1920x1080.
+How I verified it
 
-## Limitations
+npm run verify runs 9 checks using the dashboard's own constants, sample gate
+and odometry conversion code. All 9 passed in the saved run,
+proof/verify-output.txt. The simulator delivered 30.00 fps, and a pause caused
+a 2031 ms outage before frames resumed. The largest gap between simulator
+frames was 66.0 ms. It varies between runs but stayed under its 100 ms limit.
+The TypeScript check and production build exited with code 0. In rosbridge mode
+the source delivered 50.00 messages per second and the sample gate kept 29.87
+per second. The conversion check measured +0.300 m/s with constant yaw when
+driving straight and a yaw rate of +28.64 deg/s when turning. After a pause the
+outage lasted 2008 ms before messages resumed. I also checked link loss and
+reconnection in the browser by using the link drop button.
 
-The telemetry is simulated, and there is no ROS 2 to WebSocket bridge yet. The
-real `updater.py` message contains motor states at 100 Hz, so a bridge or the
-dashboard would need to map that format before field use.
+Limitations
+
+Rosbridge mode was tested only against a fake rosbridge that replays Giyan's
+demo pattern, not against real ROS 2 or her actual node. Battery is unavailable
+in rosbridge mode. The link drop button only works with the simulators.
 
 I used Claude Code as an AI coding assistant for this task. I reviewed, ran and
 tested the result myself.

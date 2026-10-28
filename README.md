@@ -4,25 +4,40 @@ A browser-based ground station telemetry dashboard for the SEDS Pakistan rover,
 built for task **SEDS-TASK-ROV-SRILANKA-005** (Web Browser Ground Station
 Telemetry Dashboard).
 
-The dashboard receives telemetry frames over a WebSocket and shows:
+The dashboard receives telemetry over a WebSocket from one of two sources:
 
-- a top status bar with link state, socket state, frames per second, latency,
-  frame counter and UTC clock
-- a position map drawn on a canvas: grid in metres, scale bar, north indicator,
-  rover marker with heading arrow and a trail that fades with age
+- **Simulator** (default): `server/telemetry-server.mjs`, a built-in simulator
+  that sends speed, battery voltage, position and heading 30 times per second.
+- **Rosbridge**: `nav_msgs/Odometry` from the `/wheel/odometry` topic, read
+  through the rosbridge v2 WebSocket protocol, as published by the
+  `wheel_odometry` node in the teammate repository `giyan-odometry`. For
+  testing without ROS 2, `server/fake-rosbridge.mjs` replays that node's demo.
+
+It shows:
+
+- a top status bar with link state, socket state, measured rate, latency,
+  frame or message counter and UTC clock
+- a position map drawn on a canvas: grid in metres, scale bar, a north
+  indicator (simulator) or a +x axis arrow (rosbridge), rover marker with
+  heading arrow and a trail that fades with age
 - a readout table for speed, battery voltage (with a NOMINAL / LOW status and a
-  bar), position X and Y, and heading as a compass bearing
-- 60 second history traces for speed and battery voltage
+  bar; shown as UNAVAILABLE in rosbridge mode), position X and Y, and heading
+  (compass bearing in simulator mode, yaw in rosbridge mode)
+- 60 second history traces for speed and battery voltage (battery trace hidden
+  in rosbridge mode)
 - a link event log with UTC timestamps
-- a link watchdog that shows LINK LOST when frames stop for more than 500 ms
-  and recovers on its own when they resume
-- a "Simulate link drop" button for demonstrating the watchdog
+- a link watchdog that shows LINK LOST when data stops for more than 500 ms
+  and recovers on its own when it resumes
+- a "Simulate link drop" button for demonstrating the watchdog (works with the
+  simulator and the fake rosbridge)
 
 It uses Next.js (App Router), React and TypeScript in strict mode, plus the `ws`
-package for the simulator. There are no UI libraries, chart libraries, map tile
-services, external fonts, CDNs or API keys.
+package for the two servers. There are no UI libraries, chart libraries, map
+tile services, external fonts, CDNs or API keys.
 
-![Dashboard](proof/dashboard-screenshot.png)
+![Dashboard, simulator mode](proof/dashboard-screenshot.png)
+
+![Dashboard, rosbridge mode against the fake rosbridge](proof/dashboard-rosbridge-screenshot.png)
 
 ## Running it
 
@@ -32,7 +47,9 @@ Requirements: Node.js 20.9 or newer (required by Next.js 16; developed on Node 2
 npm install
 ```
 
-Then, in one terminal, start the telemetry simulator (WebSocket on port 8080):
+### Simulator mode
+
+In one terminal, start the telemetry simulator (WebSocket on port 8080):
 
 ```bash
 npm run sim
@@ -44,19 +61,49 @@ In a second terminal, start the dashboard:
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000 (the same as http://localhost:3000/?source=sim).
 
-Other scripts:
+### Rosbridge mode
+
+In one terminal, start the fake rosbridge (WebSocket on port 9090):
+
+```bash
+npm run sim:rosbridge
+```
+
+In a second terminal, start the dashboard:
+
+```bash
+npm run dev
+```
+
+Open http://localhost:3000/?source=rosbridge.
+
+With real ROS 2, the dashboard expects a rosbridge server on
+`ws://localhost:9090` and the `wheel_odometry` node publishing
+`/wheel/odometry`. This has not been tested (see Limitations).
+
+### Scripts and settings
 
 | Script | What it does |
 |---|---|
+| `npm run sim` | Telemetry simulator on port 8080 |
+| `npm run sim:rosbridge` | Fake rosbridge on port 9090, publishing `/wheel/odometry` at 50 Hz |
+| `npm run dev` | Dashboard development server on port 3000 |
 | `npm run build` | Production build (includes the TypeScript check) |
 | `npm run start` | Serves the production build |
-| `npm run verify` | Runs the acceptance checks described below |
+| `npm run verify` | Runs the 9 acceptance checks described below |
 
-The dashboard connects to `ws://localhost:8080` by default. To use a different
-address, set `NEXT_PUBLIC_TELEMETRY_URL` before `npm run dev` or `npm run build`.
-The simulator port can be changed with the `PORT` environment variable.
+Any `?source=` value other than `rosbridge` uses the simulator. Addresses can be
+changed with environment variables set before `npm run dev` or `npm run build`:
+
+| Variable | Default |
+|---|---|
+| `NEXT_PUBLIC_TELEMETRY_URL` | `ws://localhost:8080` (simulator mode) |
+| `NEXT_PUBLIC_ROSBRIDGE_URL` | `ws://localhost:9090` (rosbridge mode) |
+| `NEXT_PUBLIC_ODOM_TOPIC` | `/wheel/odometry` (rosbridge mode) |
+
+Both servers take a `PORT` environment variable.
 
 ## Architecture
 
@@ -69,10 +116,18 @@ updater.py (ROS 2 node)                       Next.js dashboard
   at 100 Hz                         bridge      -> readout table, event log
                                   (WebSocket)
 
+wheel_odometry (ROS 2 node, giyan-odometry)    Next.js dashboard, ?source=rosbridge
+  publishes nav_msgs/Odometry                   subscribes with throttle_rate 0,
+  on /wheel/odometry, one per         ---->     keeps every message, samples
+  /joint_states (50 Hz in its demo) rosbridge   trail and traces at 30 Hz
+                                    (port 9090)
+
 In this repository
 ------------------
-server/telemetry-server.mjs  --WebSocket, 30 Hz-->  dashboard
-(stands in for the rover and the bridge)
+server/telemetry-server.mjs  --WebSocket, 30 Hz-->  dashboard, ?source=sim
+(stands in for the rover and a bridge)
+server/fake-rosbridge.mjs    --rosbridge, 50 Hz-->  dashboard, ?source=rosbridge
+(stands in for wheel_odometry and rosbridge_server)
 ```
 
 The reference rover software is `updater.py`, a ROS 2 node from the TrickFire
@@ -89,22 +144,38 @@ and the bridge together. It simulates the rover driving a figure-eight course
 over 10 minutes and then starts over. It sends one frame to every connected
 client 30 times per second.
 
+`server/fake-rosbridge.mjs` stands in for the `wheel_odometry` node and
+`rosbridge_server`. It answers the rosbridge `subscribe` and `unsubscribe` ops
+and publishes `nav_msgs/Odometry` on `/wheel/odometry` at 50 Hz, replaying the
+node's demo: straight at 0.3 m/s for 5 s, then a turn on the spot at 0.5 rad/s
+for 5 s, repeating. Messages use `frame_id` odom and `child_frame_id`
+base_footprint, ROS 2 style header stamps, and the node's covariance values.
+The first message after the server starts has zero pose and velocity, as in the
+node. Unlike the real node, its velocities are exact, without timing jitter.
+
 ### Source layout
 
 | Path | Contents |
 |---|---|
 | `server/telemetry-server.mjs` | Telemetry simulator (WebSocket server) |
-| `shared/telemetry-constants.mjs` | `WATCHDOG_MS`, `TARGET_FPS`, `PAUSE_MS`, `PAUSE_COMMAND`, shared by the dashboard, simulator and verify script |
-| `lib/useTelemetry.ts` | WebSocket connection, reconnect with backoff, frame store, FPS, latency, watchdog, event log |
+| `server/fake-rosbridge.mjs` | Fake rosbridge publishing the odometry demo |
+| `shared/telemetry-constants.mjs` | `WATCHDOG_MS`, `TARGET_FPS`, `PAUSE_MS`, `PAUSE_COMMAND`, default topic and rosbridge address, shared by the dashboard, servers and verify script |
+| `shared/sample-gate.mjs` | Decides which messages become trail and trace samples (30 Hz in rosbridge mode); also used by the verify script |
+| `shared/odometry.mjs` | `nav_msgs/Odometry` to x, y, yaw and speed; also used by the verify script |
+| `lib/sources.ts` | The two sources: `?source=` handling, rosbridge subscribe, message decoding |
+| `lib/odometry.ts` | Turns converted odometry into a dashboard frame |
+| `lib/useTelemetry.ts` | WebSocket connection, reconnect with backoff, frame store, rate, latency, watchdog, event log |
 | `lib/telemetry.ts` | Frame type and validation, heading to bearing conversion, number formatting |
 | `lib/useCanvasLoop.ts` | requestAnimationFrame loop for a canvas sized to the device pixel ratio |
 | `lib/drawMap.ts`, `lib/drawTrace.ts` | Canvas drawing for the map and the history traces |
 | `components/` | Dashboard layout, status bar, readouts, event log, link drop button |
 | `app/` | Next.js page, layout and stylesheet |
 | `scripts/verify.mjs` | Acceptance checks |
-| `proof/` | Saved output of `npm run verify` and a dashboard screenshot |
+| `proof/` | Saved output of `npm run verify` and dashboard screenshots |
 
 ## Data frame
+
+### Simulator mode
 
 Each WebSocket message is one JSON object:
 
@@ -131,6 +202,40 @@ display: `bearing = (90 - headingDeg) mod 360`, so 0 = north and bearings
 increase clockwise. The readout also shows the nearest 8-point cardinal
 direction (N, NE, E and so on).
 
+### Rosbridge mode
+
+After it connects, the dashboard sends:
+
+```json
+{ "op": "subscribe", "id": "ground-station:/wheel/odometry",
+  "topic": "/wheel/odometry", "type": "nav_msgs/msg/Odometry", "throttle_rate": 0 }
+```
+
+Each `{"op": "publish", "topic": "/wheel/odometry", "msg": {...}}` is converted
+by `shared/odometry.mjs`:
+
+| Dashboard value | From the `nav_msgs/Odometry` message |
+|---|---|
+| x, y (m) | `pose.pose.position.x`, `pose.pose.position.y` in the odom frame |
+| yaw (deg) | `atan2(2*w*z, 1 - 2*z*z)` from `pose.pose.orientation`, normalised to 0 to 360 |
+| speed (m/s) | `twist.twist.linear.x`, signed, negative when reversing |
+| battery | not in the message: shown as UNAVAILABLE |
+| sequence number | not in ROS 2 headers: frames missed after an outage are logged as unknown |
+
+`{"op": "status"}` messages from the server, such as errors, are shown in the
+event log as SERVER entries.
+
+**Odom frame.** +x is the direction the rover faced when the odometry node
+started, and +y is to its left. There is no north in this frame, so the map is
+labelled "odom frame, x = rover start direction", shows a +x arrow instead of a
+north arrow, and the heading readout is the yaw, counter-clockwise from the
+start direction. The map view fits the visible trail, with a minimum span of
+4 m.
+
+**Latency.** ROS header stamps come from the ROS machine's clock, which is not
+the browser's, so latency is shown as `--` in this mode. The rate in the status
+bar is still measured from message arrival times.
+
 ## How the requirements are met
 
 ### 30 fps updates
@@ -151,6 +256,12 @@ direction (N, NE, E and so on).
 - **Measured rate.** The status bar shows the measured frame rate, counted over a
   sliding 1 second window, next to the 30 fps target. Latency is
   `Date.now() - frame.ts` for the latest frame.
+- **Rosbridge mode.** The subscription uses `throttle_rate` 0, so rosbridge
+  forwards every message (a server-side throttle of 33 ms would turn a 50 Hz
+  topic into 25 Hz). Every message updates the latest values; trail points and
+  trace samples are recorded at 30 per second on average by
+  `shared/sample-gate.mjs`. The display still redraws on every animation frame.
+  The status bar shows the message rate in msg/s.
 
 ### 500 ms watchdog
 
@@ -159,15 +270,18 @@ direction (N, NE, E and so on).
   LINK LOST, so a loss is shown between 500 and 550 ms after the last frame.
 - **While the link is lost.** The status bar, map and readout panel all say
   LINK LOST in text, and the values are held and dimmed. The event log records
-  the time and the last sequence number received.
+  the time and the last sequence number received (in rosbridge mode, the time
+  of the last message).
 - **Recovery.** When frames resume, the state returns to NOMINAL on its own. The
   log records the outage length and how many frames were missed (from the
-  `seq` gap).
+  `seq` gap; logged as unknown in rosbridge mode).
 - **Connection handling.** If the WebSocket closes, the hook reconnects with
   exponential backoff: 0.5, 1, 2, 4, then 8 seconds between attempts.
 - **Link drop button.** "Simulate link drop" sends `pause` to the simulator,
-  which holds frames for `PAUSE_MS` (2 s). The button shows a countdown while
-  the hold is active.
+  or `{"op": "pause"}` to the fake rosbridge, which then holds data for
+  `PAUSE_MS` (2 s). The button shows a countdown while the hold is active. The
+  pause op is not part of the rosbridge protocol, so a real rosbridge is
+  expected to reject it (not tested).
 
 ## Verification
 
@@ -213,19 +327,24 @@ Last saved run (`proof/verify-output.txt`, Windows 11, Node 24.18):
 | 8. Odometry conversion | straight +0.300 m/s, yaw spread 0.00 deg; turn yaw rate +28.64 deg/s | PASS |
 | 9. Rosbridge pause | 2008 ms outage, messages resumed | PASS |
 
-The simulator's largest gap varies between runs (48.7 ms and 66.0 ms in two
-consecutive runs) because of the Windows timer resolution (about 15.6 ms) and
-other load on the machine. It is the check with the smallest margin. Check 8
+The simulator's largest gap varies between runs: 48.7 ms in the run just before
+(`proof/verify-output-run1.txt`) and 66.0 ms in the saved run, because of the
+Windows timer resolution (about 15.6 ms) and other load on the machine. All 9
+checks passed in both runs. It is the check with the smallest margin. Check 8
 measures exact values because the fake rosbridge computes ideal odometry; the
 real node's speeds jitter slightly around 0.3 m/s.
 
 ## Limitations
 
-- **Simulated telemetry.** All telemetry is simulated. The dashboard has not
-  been connected to the rover or to a real ROS 2 system.
-- **No ROS 2 bridge yet.** No ROS 2 to WebSocket bridge is included. Forwarding
-  the `mission_control_updater` topic to the browser still has to be built and
-  tested.
+- **Rosbridge mode tested only against the fake.** Rosbridge mode was tested
+  only against `server/fake-rosbridge.mjs`, which replays the `wheel_odometry`
+  demo pattern. It has not been run against a real `rosbridge_server`, ROS 2,
+  or the actual `wheel_odometry` node, and the fake does not reproduce the real
+  node's speed jitter.
+- **Simulated telemetry.** Both data sources used in testing are simulated. The
+  dashboard has not been connected to the rover.
+- **No bridge for updater.py.** Forwarding the `mission_control_updater` topic
+  to the browser has not been built or tested.
 - **Different message content.** The JSON that `updater.py` publishes holds motor
   state entries (built by `InfoToJSONHelper` from the motor configuration), not
   the position, speed, battery and heading fields used here. A bridge, or a
@@ -234,14 +353,23 @@ real node's speeds jitter slightly around 0.3 m/s.
 - **Different rates.** `updater.py` publishes at 100 Hz, while the dashboard is
   designed and tested for 30 Hz. A bridge would need to downsample, or the
   dashboard would need checking at the higher rate.
+- **Battery unavailable in rosbridge mode.** `nav_msgs/Odometry` carries no
+  battery data, so the battery readout shows UNAVAILABLE and its trace is
+  hidden.
+- **Link drop button needs a simulator.** The pause it sends is understood only
+  by `server/telemetry-server.mjs` and `server/fake-rosbridge.mjs`. A real
+  rosbridge is expected to answer with an error status; in that case the code
+  clears the button after about 3 s without a link drop. This has not been
+  tested with a real rosbridge.
 - **Local position frame.** Position is in a local frame in metres starting at
-  the origin. There is no GPS or map projection.
+  the origin (in rosbridge mode, the odom frame, where +x is the rover's start
+  direction). There is no GPS or map projection.
 - **No security.** There is no authentication or encryption on the WebSocket
   (`ws://`, not `wss://`). It is meant for a trusted local network.
-- **Pause affects everyone.** The `pause` command is a simulator feature for
-  demonstrations. It affects every connected client.
+- **Pause affects everyone.** The pause is a demonstration feature of the two
+  simulators. It affects every connected client.
 - **Limited test coverage.** `npm run verify` checks the data sources' rates and
   timing, the sample gate, the odometry conversion and the build. It does not
   drive the dashboard in a browser. The dashboard's LINK LOST display and
-  recovery were checked by hand. The odometry checks run against
-  `server/fake-rosbridge.mjs`, not a real rosbridge_server and ROS 2 node.
+  recovery were checked by hand in the browser with the link drop button, in
+  both modes.
