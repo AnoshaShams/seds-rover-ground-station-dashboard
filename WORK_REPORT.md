@@ -36,7 +36,7 @@ Rosbridge mode was tested only against a fake rosbridge that replays Giyan's
 demo pattern, not against real ROS 2 or her actual node. Battery is unavailable
 in rosbridge mode. The link drop button only works with the simulators.
 
-I used Claude Code as an AI coding assistant for this task. I reviewed, ran and
+I used Claude as an AI coding assistant for this task. I reviewed, ran and
 tested the result myself.
 
 Repository: https://github.com/AnoshaShams/seds-rover-ground-station-dashboard
